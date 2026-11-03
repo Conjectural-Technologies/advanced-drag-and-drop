@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the tag matches module.json
+        run: |
+          version="$(jq -r .version module.json)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match module.json version $version" >&2
+            exit 1
+          fi
+
+      - name: Point the download URL at this release
+        run: |
+          jq --arg url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/module.zip" \
+            '.download = $url' module.json > module.tmp
+          mv module.tmp module.json
+
+      - name: Build module.zip
+        run: zip -r ../module.zip . -x ".git/*" ".github/*" ".gitignore" "README.md" "*.lock" "*/LOCK"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" ../module.zip module.json \
+            --title "$GITHUB_REF_NAME" --generate-notes
