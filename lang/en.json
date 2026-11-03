@@ -1,0 +1,30 @@
+{
+  "ADVANCED_DRAG_DROP.Controls.Name": "Transfer",
+  "ADVANCED_DRAG_DROP.Move": "Move",
+  "ADVANCED_DRAG_DROP.Invalid": "This selection cannot be transferred to that destination.",
+  "ADVANCED_DRAG_DROP.Permission": "You must own the source and destination and have permission to create the transferred documents.",
+  "ADVANCED_DRAG_DROP.Recursive": "A container cannot be moved into itself or its contents.",
+  "ADVANCED_DRAG_DROP.Busy": "A transfer involving these documents is already in progress.",
+  "ADVANCED_DRAG_DROP.Changed": "The source changed during the transfer. The transfer was canceled.",
+  "ADVANCED_DRAG_DROP.Failed": "The transfer was not completed; its changes have been rolled back.",
+  "ADVANCED_DRAG_DROP.Recovery": "Transfer recovery was incomplete. Check the console for document IDs before retrying.",
+  "ADVANCEDITEMS": {
+    "ObjectProperties": "Object Properties",
+    "Resistances": "Resistances",
+    "Vulnerabilities": "Vulnerabilities",
+    "AutomaticFailure": "Automatic failure (objects have no ability scores)",
+    "Conditions": "Hit point conditions",
+    "ViewItemArtwork": "View Item Artwork",
+    "LinkItemData": "Link Item Data",
+    "RepresentedItem": "Represented Item",
+    "LinkItemDataHint": "Share item and object data with the source world item and its other linked tokens. Turning this on replaces this token's independent data with the world item's data.",
+    "LinkUnavailable": "The linked world item is unavailable or you do not own it. Unlink this token to edit it independently.",
+    "LinkedPrimary": "Unlink this object before deleting its primary item.",
+    "Permission": "You do not have permission to place or configure this object.",
+    "InvalidPosition": "Objects must be placed within the scene.",
+    "InvalidNumber": "Object properties must be non-negative whole numbers.",
+    "InvalidSize": "Choose a valid object size.",
+    "Unlinked": "Item-backed object tokens must remain unlinked and cannot be reassigned to a world Actor.",
+    "Failure": "Advanced Drag & Drop could not complete the object operation. See the console for details."
+  }
+}

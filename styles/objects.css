@@ -1,0 +1,29 @@
+[data-advanced-items-replaced] {
+  display: none !important;
+}
+
+.advanced-items-properties [data-trait-summary] {
+  margin: 0;
+}
+
+.advanced-items-properties [data-trait-summary] > h3 {
+  cursor: pointer;
+  font: 700 12px/26px "Roboto Slab", serif;
+  text-transform: none;
+  margin: 0;
+  padding: 0;
+  height: auto;
+}
+
+.advanced-items-properties [data-trait-summary] > h3 .roboto-upper {
+  font: inherit;
+  text-transform: none;
+}
+
+.advanced-items-properties [data-trait-summary] > h3:hover .config-button {
+  text-shadow: 0 0 5px var(--color-shadow-primary);
+}
+
+.advanced-items-properties [data-trait-summary] .pills {
+  margin: 0;
+}

@@ -1,0 +1,33 @@
+.advanced-drag-and-drop-preview {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  opacity: 0.8;
+}
+
+.advanced-drag-and-drop-token-preview {
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: visible;
+}
+
+.advanced-drag-and-drop-token-preview > canvas {
+  position: absolute;
+  max-width: none;
+  max-height: none;
+}
+
+.advanced-drag-and-drop-target {
+  outline: 2px solid var(--color-border-highlight, #ff6400) !important;
+  outline-offset: -2px;
+}
+
+.tidy5e-sheet .advanced-drag-and-drop-source [data-keyboard-focus]:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
