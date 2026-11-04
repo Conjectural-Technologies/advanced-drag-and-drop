@@ -1,13 +1,13 @@
 import {
-  OBJECT_SCOPE, ITEM_TYPES, OBJECT_TRAITS, actorDataForItem, isMountable, isObjectItem, isObjectActor,
-  containedItemData, objectActorData, objectProperties, objectPropertyUpdate, synchronizeObjectItem, tokenDimension
+  OBJECT_SCOPE, OBJECT_TRAITS, actorDataForItem, isMountable, isObjectItem, isObjectItemType, isObjectActor,
+  containedItemData, objectActorData, objectBypassTraits, objectProperties, objectPropertyUpdate,
+  remapItemIds, replacement, setCargoState, synchronizeObjectItem, tokenDimension
 } from "./object-data.mjs";
 import { linkedSource, registerItemLinking } from "./item-linking.mjs";
 import { MODULE_ID } from "./controls.mjs";
 
 const baseActors = new WeakMap();
 const observers = new WeakMap();
-const refreshingSheets = new WeakSet();
 const localize = key => game.i18n.localize(key);
 
 function reportError(error) {
@@ -102,12 +102,12 @@ function registerDocuments() {
         if (expanded.prototypeToken) {
           const prototype = candidate.prototypeToken.toObject();
           prototype.actorLink = false;
-          updates[`flags.${OBJECT_SCOPE}.actor.prototypeToken`] = new foundry.data.operators.ForcedReplacement(prototype);
+          updates[`flags.${OBJECT_SCOPE}.actor.prototypeToken`] = replacement(prototype);
         }
         for (const key of OBJECT_TRAITS) {
           if (expanded.system?.traits && key in expanded.system.traits) {
             updates[`flags.${OBJECT_SCOPE}.object.traits.${key}`] =
-              new foundry.data.operators.ForcedReplacement(candidate.system.toObject().traits[key]);
+              replacement(candidate.system.toObject().traits[key]);
           }
         }
         if (expanded.system?.traits?.size) updates[`flags.${OBJECT_SCOPE}.object.size`] = candidate.system.traits.size;
@@ -188,8 +188,12 @@ function registerDocuments() {
   Hooks.on("preUpdateItem", (item, changes) => {
     if (!isObjectItem(item)) return;
     const expanded = foundry.utils.expandObject(changes);
-    const type = expanded.system?.type?.value ?? item.system.type?.value;
-    if (!isMountable({ type: item.type, system: { type: { value: type } } })) return;
+    let candidate = item;
+    if (expanded.system?.type) {
+      candidate = new CONFIG.Item.documentClass(item.toObject());
+      candidate.updateSource(expanded);
+    }
+    if (!isMountable(candidate)) return;
     if (expanded.system?.armor && "value" in expanded.system.armor) {
       changes[`flags.${OBJECT_SCOPE}.object.ac`] = expanded.system.armor.value;
     } else if (expanded.system?.type?.value && item.flags?.[OBJECT_SCOPE]?.object?.ac !== undefined) {
@@ -210,13 +214,8 @@ export async function createObjectToken(item, data, event = {}) {
     if (!game.user.can("ITEM_CREATE")) throw new Error(localize("ADVANCEDITEMS.Permission"));
     const contents = await containedItemData(item);
     const source = [item, ...contents];
-    const ids = new Map(source.map(entry => [entry.id ?? entry._id, foundry.utils.randomID()]));
-    const imported = source.map(entry => {
-      const data = game.items.fromCompendium(entry, { clearFolder: true, keepId: true });
-      data._id = ids.get(entry.id ?? entry._id);
-      data.system.container = ids.get(data.system.container) ?? null;
-      return data;
-    });
+    const imported = remapItemIds(source.map(entry =>
+      game.items.fromCompendium(entry, { clearFolder: true, keepId: true })));
     const created = await Item.implementation.createDocuments(imported, {
       keepId: true, fromCompendium: item.inCompendium
     });
@@ -252,17 +251,8 @@ export async function addCargo(vehicle, item) {
   if (vehicle.type !== "vehicle" || !vehicle.isOwner || !isObjectItem(item) || !item.isOwner) {
     throw new Error(localize("ADVANCEDITEMS.Permission"));
   }
-  const data = [item.toObject(), ...await containedItemData(item)];
-  const ids = new Map(data.map(entry => [entry._id, foundry.utils.randomID()]));
-  for (const entry of data) {
-    const oldId = entry._id;
-    entry._id = ids.get(oldId);
-    entry.system.container = ids.get(entry.system.container) ?? null;
-    entry.flags ??= {};
-    entry.flags[OBJECT_SCOPE] ??= {};
-    entry.flags[OBJECT_SCOPE].cargo = true;
-    if ("equipped" in entry.system) entry.system.equipped = false;
-  }
+  const data = remapItemIds([item.toObject(), ...await containedItemData(item)]);
+  for (const entry of data) setCargoState(entry, true);
   return vehicle.createEmbeddedDocuments("Item", data, { keepId: true });
 }
 
@@ -272,7 +262,7 @@ function registerDrops() {
     // Hooks are synchronous; claim physical-item drops before starting asynchronous work.
     const resolved = data.uuid ? fromUuidSync(data.uuid, { strict: false }) : null;
     const type = resolved?.type ?? data.data?.type;
-    if (type && !ITEM_TYPES.has(type)) return;
+    if (type && !isObjectItemType(type)) return;
     const item = isObjectItem(resolved) ? resolved : null;
     if (!item && !data.uuid && !data.data) return;
     run(async () => {
@@ -311,7 +301,6 @@ function tokenControl(item) {
   };
 }
 
-const BYPASS_TRAITS = ["dr", "di", "dv", "dm"];
 const traitDialogs = new WeakMap();
 
 const isEditable = sheet => sheet.document.isOwner
@@ -345,8 +334,7 @@ function allSelected(value, trait) {
   return traitChoices(trait).every(([key]) => key === "ALL" || value.includes(key));
 }
 
-function traitPills(item, trait) {
-  const values = objectProperties(item).traits;
+function traitPills(values, trait) {
   const captions = new Map(traitChoices(trait));
   const name = key => captions.get(key) ?? key;
   if (trait === "dm") {
@@ -354,7 +342,7 @@ function traitPills(item, trait) {
       .map(([key, formula]) => ({ label: name(key), value: formula }));
   }
   if (trait === "bypasses") {
-    const selected = new Set(BYPASS_TRAITS.flatMap(key => values[key].bypasses ?? []));
+    const selected = new Set(objectBypassTraits().flatMap(key => values[key].bypasses ?? []));
     return [...selected].map(key => ({ label: name(key) }));
   }
   const pills = values[trait].value.filter(key => key !== "ALL").map(key => ({ label: name(key) }));
@@ -436,7 +424,7 @@ function buildTraitControls(trait, sheet) {
 function syncTraitControls(root, sheet) {
   const editable = isEditable(sheet);
   const values = objectProperties(sheet.document);
-  const bypasses = new Set(BYPASS_TRAITS.flatMap(trait => values.traits[trait].bypasses ?? []));
+  const bypasses = new Set(objectBypassTraits().flatMap(trait => values.traits[trait].bypasses ?? []));
   for (const control of root.querySelectorAll("[data-object-trait]")) {
     control.disabled = !editable;
     const trait = control.dataset.objectTrait;
@@ -468,7 +456,7 @@ function onTraitChange(event, sheet) {
     if (trait === "bypasses") {
       const selected = [...root.querySelectorAll('[data-object-trait="bypasses"]')]
         .filter(control => control.checked).map(control => control.dataset.traitKey);
-      for (const damage of BYPASS_TRAITS) updates[`system.traits.${damage}.bypasses`] = selected;
+      for (const damage of objectBypassTraits()) updates[`system.traits.${damage}.bypasses`] = selected;
     } else if (trait === "dm") {
       const formula = input.value.trim();
       updates[`system.traits.dm.amount.${key}`] = formula || new foundry.data.operators.ForcedDeletion();
@@ -574,8 +562,9 @@ function appendTraitSummaries(section, sheet) {
 }
 
 function syncTraitSummaries(section, sheet) {
+  const values = objectProperties(sheet.document).traits;
   for (const group of section.querySelectorAll("[data-trait-summary]")) {
-    const entries = traitPills(sheet.document, group.dataset.traitSummary);
+    const entries = traitPills(values, group.dataset.traitSummary);
     group.querySelector(".pills").replaceChildren(...entries.map(({ label, value }) => {
       const pill = document.createElement("li");
       pill.className = "pill";
@@ -635,7 +624,6 @@ function refreshSheet(sheet) {
   if (!root?.isConnected || !isObjectItem(item)) return;
   const observer = observers.get(sheet);
   observer?.disconnect();
-  refreshingSheets.add(sheet);
   try {
     const header = root.querySelector(".window-header");
     if (header) {
@@ -772,7 +760,6 @@ function refreshSheet(sheet) {
     }
     syncTraitSummaries(section, sheet);
   } finally {
-    refreshingSheets.delete(sheet);
     observer?.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "disabled"] });
   }
 }
@@ -849,4 +836,3 @@ export function registerObjectItems() {
   registerDrops();
   registerSheets();
 }
-

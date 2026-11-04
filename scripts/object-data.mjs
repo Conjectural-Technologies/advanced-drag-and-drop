@@ -1,9 +1,15 @@
 export const OBJECT_SCOPE = "advanced-items";
-export const ITEM_TYPES = new Set(["consumable", "container", "equipment", "loot", "tool", "weapon"]);
 export const OBJECT_TRAITS = ["dr", "di", "ci", "dv", "dm"];
 
+export const replacement = value => new foundry.data.operators.ForcedReplacement(value);
+
+export function isObjectItemType(type) {
+  const fields = CONFIG.Item.dataModels[type]?.schema.fields;
+  return Boolean(fields?.quantity && fields?.container);
+}
+
 export function isObjectItem(item) {
-  return item?.documentName === "Item" && ITEM_TYPES.has(item.type);
+  return item?.documentName === "Item" && isObjectItemType(item.type);
 }
 
 export function isObjectActor(actor) {
@@ -11,8 +17,30 @@ export function isObjectActor(actor) {
 }
 
 export function isMountable(item) {
-  return (item.type === "weapon" && item.system.type?.value === "siege")
-    || (item.type === "equipment" && item.system.type?.value === "vehicle");
+  return item.system.isMountable === true;
+}
+
+export function setCargoState(data, cargo) {
+  if (cargo) {
+    data.flags ??= {};
+    data.flags[OBJECT_SCOPE] ??= {};
+    data.flags[OBJECT_SCOPE].cargo = true;
+  } else if (data.flags?.[OBJECT_SCOPE]) delete data.flags[OBJECT_SCOPE].cargo;
+  if ("equipped" in data.system) data.system.equipped = false;
+}
+
+export function remapItemIds(data) {
+  const ids = new Map(data.map(entry => [entry._id, foundry.utils.randomID()]));
+  for (const entry of data) {
+    entry._id = ids.get(entry._id);
+    entry.system.container = ids.get(entry.system.container) ?? null;
+  }
+  return data;
+}
+
+export function objectBypassTraits() {
+  const fields = CONFIG.Actor.dataModels.npc.schema.fields.traits.fields;
+  return OBJECT_TRAITS.filter(key => fields[key].fields.bypasses);
 }
 
 export function objectProperties(item) {
@@ -112,7 +140,7 @@ export function synchronizeObjectItem(actor, data) {
     candidate.updateSource({ system: { traits } });
     for (const key of OBJECT_TRAITS) {
       if (key in traits) updates[`flags.${OBJECT_SCOPE}.object.traits.${key}`] =
-        new foundry.data.operators.ForcedReplacement(candidate.system.toObject().traits[key]);
+        replacement(candidate.system.toObject().traits[key]);
     }
     if ("size" in traits) Object.assign(updates, objectPropertyUpdate(item, "size", candidate.system.traits.size));
   }

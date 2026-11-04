@@ -3,54 +3,142 @@ import {assert, isPhysicalItem, localize, report, sourceForToken, transfer} from
 
 let uninstall;
 
+function canvasPosition(point) {
+  return canvas.stage.toLocal(new PIXI.Point(point.clientX, point.clientY));
+}
+
+function updateNativePreview(session) {
+  session.native._updateDragDestination(canvasPosition(session.point), {snap: !session.point.shiftKey});
+}
+
 function getCanvasTokenPositions(session, point) {
-  const destination = canvas.stage.toLocal(new PIXI.Point(point.clientX, point.clientY));
-  const origin = session.data.origin;
+  const destination = canvasPosition(point);
+  const origin = session.native._getDragOrigin();
   return Object.values(session.data.contexts).map(context => {
     const token = context.token.document;
-    let position = {x: context.origin.x + destination.x - origin.x,
-      y: context.origin.y + destination.y - origin.y, elevation: context.origin.elevation};
-    if (!point.shiftKey) position = token.getSnappedPosition(position);
+    const position = context.token._getDragWaypointPosition(context.origin, {
+      x: token._source.x + destination.x - origin.x,
+      y: token._source.y + destination.y - origin.y, elevation: context.origin.elevation
+    }, {snap: !point.shiftKey && !canvas.grid.isGridless});
     return {token: context.token, position};
   });
 }
 
-function createTokenPreview(session) {
+function createTokenPreview() {
   const element = document.createElement("div");
   element.className = "advanced-drag-and-drop-preview advanced-drag-and-drop-token-preview";
   element.setAttribute("aria-hidden", "true");
-  for (const {token} of Object.values(session.data.contexts)) {
-    const container = new PIXI.Container();
-    const sprite = container.addChild(new PIXI.Sprite(token.mesh.texture));
-    sprite.anchor.copyFrom(token.mesh.anchor);
-    sprite.scale.copyFrom(token.mesh.scale);
-    sprite.rotation = token.mesh.rotation;
-    sprite.tint = token.mesh.tint;
-    let image;
-    try { image = canvas.app.renderer.extract.canvas(container); }
-    finally { container.destroy({children: true}); }
-    image.dataset.tokenId = token.id;
-    element.append(image);
-  }
   return element;
 }
 
-function positionTokenPreview(session) {
+function updateTransferClones(session) {
   for (const {token, position} of getCanvasTokenPositions(session, session.point)) {
-    const image = session.proxy.querySelector(`[data-token-id="${token.id}"]`);
-    const bounds = token.mesh.getBounds();
-    const current = canvas.stage.toGlobal(new PIXI.Point(token.document.x, token.document.y));
-    const destination = canvas.stage.toGlobal(new PIXI.Point(position.x, position.y));
-    image.style.left = `${destination.x + bounds.x - current.x}px`;
-    image.style.top = `${destination.y + bounds.y - current.y}px`;
-    image.style.width = `${bounds.width}px`;
-    image.style.height = `${bounds.height}px`;
+    const clone = session.data.contexts[token.id].clonedToken;
+    const refreshPosition = clone.document.x !== position.x || clone.document.y !== position.y;
+    const refreshElevation = clone.document.elevation !== position.elevation;
+    Object.assign(clone.document, position);
+    clone.renderFlags.set({refreshPosition, refreshElevation});
+    clone.applyRenderFlags();
+  }
+}
+
+function captureTokenPreview(clone) {
+  // Render the actual mesh and decorations in place so primary-group shaders and transforms stay intact.
+  const container = new PIXI.Container();
+  const objects = [clone.mesh, clone].map(object => ({object, cullable: object.cullable}));
+  const screenBounds = clone.mesh.getBounds().clone();
+  screenBounds.enlarge(clone.getBounds());
+  container.render = renderer => {
+    // Decorations can query mesh bounds and change its cached vertices before a batch is flushed.
+    for (const {object} of objects) {
+      object.render(renderer);
+      renderer.batch.flush();
+    }
+  };
+  let texture;
+  try {
+    for (const {object} of objects) object.cullable = false;
+    const renderer = canvas.app.renderer;
+    texture = PIXI.RenderTexture.create({width: screenBounds.width, height: screenBounds.height,
+      resolution: renderer.resolution, multisample: renderer.multisample});
+    renderer.render(container, {renderTexture: texture,
+      transform: new PIXI.Matrix().translate(-screenBounds.x, -screenBounds.y),
+      skipUpdateTransform: true, blit: true});
+    const image = renderer.extract.canvas(texture);
+    const topLeft = canvas.stage.toLocal(new PIXI.Point(screenBounds.x, screenBounds.y));
+    const bounds = new PIXI.Rectangle(topLeft.x, topLeft.y,
+      screenBounds.width / canvas.stage.scale.x, screenBounds.height / canvas.stage.scale.y);
+    return {image, bounds};
+  } finally {
+    for (const {object, cullable} of objects) object.cullable = cullable;
+    container.destroy();
+    texture?.destroy(true);
+  }
+}
+
+function restoreTokenPreviews(session) {
+  for (const {clone, renderable, meshRenderable} of session.previews.values()) {
+    if (clone.destroyed) continue;
+    clone.renderable = renderable;
+    clone.mesh.renderable = meshRenderable;
+    clone.renderFlags.set({refreshVisibility: true});
+    clone.applyRenderFlags();
+  }
+}
+
+function updateRulerVisibility(session, transferring) {
+  for (const {token, clonedToken} of Object.values(session.data.contexts)) {
+    for (const object of [token, clonedToken]) {
+      if (!object.destroyed && object.ruler) {
+        object.ruler.visible = transferring ? false : object.ruler.isVisible;
+      }
+    }
+  }
+}
+
+function positionTokenPreview(session, floating) {
+  const scale = canvas.stage.scale;
+  for (const [id, entry] of session.previews) {
+    if (session.data.contexts[id]) continue;
+    entry.image?.remove();
+    session.previews.delete(id);
+  }
+  for (const {token, clonedToken: clone} of Object.values(session.data.contexts)) {
+    if (!clone.mesh || !clone.visible) continue;
+    clone.applyRenderFlags();
+    let entry = session.previews.get(token.id);
+    if (!entry) {
+      entry = {clone, renderable: clone.renderable, meshRenderable: clone.mesh.renderable};
+      session.previews.set(token.id, entry);
+    }
+    if (floating && !entry.image) {
+      Object.assign(entry, captureTokenPreview(clone));
+      entry.offset = {x: entry.bounds.x - clone.document.x, y: entry.bounds.y - clone.document.y};
+      session.proxy.append(entry.image);
+    }
+    const renderable = floating ? false : entry.renderable;
+    const refreshVisibility = clone.renderable !== renderable;
+    clone.renderable = renderable;
+    clone.mesh.renderable = floating ? false : entry.meshRenderable;
+    if (refreshVisibility) {
+      clone.renderFlags.set({refreshVisibility: true});
+      clone.applyRenderFlags();
+    }
+    if (entry.image) {
+      entry.image.hidden = !floating;
+      const topLeft = canvas.stage.toGlobal(new PIXI.Point(
+        clone.document.x + entry.offset.x, clone.document.y + entry.offset.y));
+      Object.assign(entry.image.style, {
+        left: `${topLeft.x}px`, top: `${topLeft.y}px`,
+        width: `${entry.bounds.width * scale.x}px`, height: `${entry.bounds.height * scale.y}px`
+      });
+    }
   }
 }
 
 async function moveCanvasTokens(session, point) {
   const positions = getCanvasTokenPositions(session, point);
-  const destination = canvas.stage.toLocal(new PIXI.Point(point.clientX, point.clientY));
+  const destination = canvasPosition(point);
   assert(positions.length && canvas.dimensions.rect.contains(destination.x, destination.y));
   const moves = {};
   for (const {token: object, position} of positions) {
@@ -114,7 +202,7 @@ function targetAt(element, sources, point) {
   }
   if (element !== canvas.app?.view && element?.closest?.("#board") !== canvas.app?.view) return null;
   if (!sources.every(source => source.kind === "item" || source.kind === "crew")) return null;
-  const position = canvas.stage.toLocal(new PIXI.Point(point.clientX, point.clientY));
+  const position = canvasPosition(point);
   if (!canvas.dimensions.rect.contains(position.x, position.y)) return null;
   const vehicle = sources.every(source => source.kind === "item")
     ? canvas.tokens.placeables.find(token => token.actor?.type === "vehicle"
@@ -179,7 +267,11 @@ export function installDragBridge() {
     clearHighlight();
     session?.proxy?.remove();
     for (const source of session?.sources ?? []) source.element?.classList.remove("advanced-drag-and-drop-source");
-    if (session?.native) session.native.layer.preview.renderable = session.previewRenderable;
+    if (session?.native) {
+      restoreTokenPreviews(session);
+      updateRulerVisibility(session, false);
+    }
+    if (session?.ticker) canvas.app.ticker.remove(session.ticker);
     return session;
   };
   const cancel = () => {
@@ -216,14 +308,24 @@ export function installDragBridge() {
     clearHighlight();
     const held = isTransferHeld();
     for (const source of active.sources) source.element?.classList.toggle("advanced-drag-and-drop-source", held);
-    if (active.native) active.native.layer.preview.renderable = held ? false : active.previewRenderable;
+    if (active.native) {
+      if (held) updateTransferClones(active);
+      else if (active.held) {
+        // Native movement was suppressed in transfer mode; resume at the current cursor immediately.
+        updateNativePreview(active);
+      }
+      active.held = held;
+      updateRulerVisibility(active, held);
+    }
     if (!held && active.native) {
+      restoreTokenPreviews(active);
       active.proxy?.remove();
       active.proxy = null;
+      active.previews.clear();
       return;
     }
     if (!active.proxy) {
-      if (active.native) active.proxy = createTokenPreview(active);
+      if (active.native) active.proxy = createTokenPreview();
       else {
         active.proxy = document.createElement("img");
         active.proxy.className = "advanced-drag-and-drop-preview";
@@ -232,16 +334,32 @@ export function installDragBridge() {
       }
       document.body.append(active.proxy);
     }
-    if (active.native) positionTokenPreview(active);
+    const element = document.elementFromPoint(active.point.clientX, active.point.clientY);
+    if (active.native) {
+      const floating = Boolean(sheetAt(element));
+      if (!floating) {
+        for (const entry of active.previews.values()) {
+          entry.image?.remove();
+          delete entry.image;
+        }
+      }
+      positionTokenPreview(active, floating);
+    }
     else {
       active.proxy.style.left = `${active.point.clientX + 12}px`;
       active.proxy.style.top = `${active.point.clientY + 12}px`;
     }
-    const element = document.elementFromPoint(active.point.clientX, active.point.clientY);
     const target = targetAt(element, active.sources, active.point);
     if (held && target) {
       highlighted = target.element;
       highlighted.classList.add("advanced-drag-and-drop-target");
+    }
+  };
+  const refreshVisual = () => {
+    try { visual(); }
+    catch (error) {
+      cancel();
+      report(error);
     }
   };
   const wrap = (name, callback) => {
@@ -250,18 +368,44 @@ export function installDragBridge() {
     originals.set(name, {own, original});
     prototype[name] = function(...args) { return callback.call(this, original, ...args); };
   };
+  wrap("_refreshState", function(original, ...args) {
+    const result = original.apply(this, args);
+    if (active?.native && isTransferHeld() && this.ruler
+      && Object.values(active.data.contexts).some(context => context.token === this || context.clonedToken === this)) {
+      this.ruler.visible = false;
+    }
+    return result;
+  });
   wrap("_initializeDragLeft", function(original, event) {
     const result = original.call(this, event);
     cleanup();
     const tokens = Object.values(event.interactionData.contexts ?? {}).map(context => context.token.document);
     if (!tokens.length) return result;
     active = {native: this, data: event.interactionData, sources: tokens.map(sourceForToken),
-      previewRenderable: this.layer.preview.renderable, point: event};
-    visual();
+      previews: new Map(), held: false, point: event};
+    active.ticker = () => { if (isTransferHeld()) refreshVisual(); };
+    canvas.app.ticker.add(active.ticker, undefined, PIXI.UPDATE_PRIORITY.OBJECTS - 1);
+    refreshVisual();
     return result;
   });
   wrap("_onDragLeftMove", function(original, event) {
-    if (active?.native === this && isTransferHeld()) return;
+    if (active?.native === this) {
+      // Foundry can emulate movement using an older canvas event while the cursor is over UI.
+      // The document pointer listener is authoritative, including modifier changes.
+      if (isTransferHeld()) {
+        refreshVisual();
+        if (!active) return;
+        if (document.elementFromPoint(active.point.clientX, active.point.clientY) === canvas.app.view) {
+          canvas._onDragCanvasPan(event);
+        }
+        return;
+      }
+      if (event.clientX !== active.point.clientX || event.clientY !== active.point.clientY
+        || event.shiftKey !== active.point.shiftKey) {
+        updateNativePreview(active);
+        return;
+      }
+    }
     return original.call(this, event);
   });
   wrap("_onDragLeftDrop", function(original, event) {
@@ -305,10 +449,12 @@ export function installDragBridge() {
     if (!active) {
       active = {sheet: true, sources: [pending.source], point: pending.point};
       pending = null;
-      visual();
+      refreshVisual();
     }
   }, options);
   document.addEventListener("pointermove", event => {
+    // Foundry dispatches synthetic pointermoves from its last canvas event, which can be stale over sheets.
+    if (active?.native && !event.isTrusted) return;
     if (bindingChanged()) return;
     if (pending && !active && (event.buttons & 1)
       && Math.hypot(event.clientX - pending.point.clientX, event.clientY - pending.point.clientY) >= 8) {
@@ -318,8 +464,8 @@ export function installDragBridge() {
     }
     if (!active) return;
     active.point = event;
-    visual();
-    if (active.sheet) event.preventDefault();
+    refreshVisual();
+    if (active?.sheet) event.preventDefault();
   }, options);
   document.addEventListener("pointerup", event => {
     pending = null;
@@ -346,7 +492,10 @@ export function installDragBridge() {
       return;
     }
     if (!active && event.target.closest?.("input,textarea,select,[contenteditable=true]")) return;
+    if (active) active.point = {clientX: active.point.clientX, clientY: active.point.clientY,
+      shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey};
     setTransferHeld(bindingMatches(keys, event));
+    refreshVisual();
     if (active && isTransferHeld()) event.preventDefault();
   };
   document.addEventListener("keydown", keyChange, options);
@@ -360,7 +509,7 @@ export function installDragBridge() {
   document.addEventListener("contextmenu", () => { if (active) cancel(); }, options);
   document.addEventListener("pointercancel", () => { cancel(); setTransferHeld(false); }, options);
   window.addEventListener("blur", () => { keys.clear(); cancel(); setTransferHeld(false); }, {signal: abort.signal});
-  const off = onTransferChange(visual);
+  const off = onTransferChange(refreshVisual);
   const hook = Hooks.on("canvasTearDown", cancel);
   uninstall = () => {
     cancel();

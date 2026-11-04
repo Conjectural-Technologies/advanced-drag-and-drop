@@ -1,8 +1,12 @@
 # Advanced Drag & Drop
 
+**Release:** 2.0.0.
+
 Smarter dragging and dropping for D&D 5e in Foundry VTT v14. Move items and creatures between sheets, containers, vehicles and the canvas, and place physical items on the map as **object tokens** with their own hit points, armour class and damage traits.
 
 **Requirements:** Foundry VTT v14 and the D&D 5e system 6.0.6 or newer.
+
+Physical item support follows D&D 5e's quantity/container schema, mountable status follows its data-model getters, and token dimensions and physical bypass options use the system's size and trait definitions.
 
 ## Installation
 
@@ -23,6 +27,9 @@ Hold the **Transfer** key (default <kbd>V</kbd>, rebindable under **Configure Co
 - **Containers** move with their contents.
 - **Safe by design:** ownership and permissions are checked, transfers are rolled back on failure, and moving items into a vehicle marks them as cargo and unequips them.
 - A drag preview shows what you are moving. Hold <kbd>Shift</kbd> to disable snapping.
+- Canvas transfers keep Foundry's live token previews without adding a frame around the artwork. Movement still ignores walls and movement costs.
+- While Transfer is held during a token drag, Foundry's movement ruler (highlight ring, path and distance labels) is hidden. Releasing Transfer immediately restores its normal visibility.
+- Over sheets, the floating token preview captures Foundry's rendered artwork and decorations at the same scale and cursor anchor. Animated textures and effects pause in this floating capture and resume on returning to the canvas.
 
 ### Object tokens
 Drop a consumable, container, equipment, loot, tool or weapon item onto the canvas to create an object token.

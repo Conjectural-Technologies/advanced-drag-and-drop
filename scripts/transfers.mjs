@@ -1,6 +1,8 @@
 import {MODULE_ID} from "./controls.mjs";
 import {createObjectToken} from "./objects.mjs";
-import {OBJECT_SCOPE, isObjectActor, isObjectItem as isPhysicalItem, objectProperties} from "./object-data.mjs";
+import {
+  OBJECT_SCOPE, isObjectActor, isObjectItem as isPhysicalItem, objectProperties, replacement, setCargoState
+} from "./object-data.mjs";
 
 const busy = new Set();
 export {isPhysicalItem};
@@ -201,11 +203,11 @@ async function updateRoster(vehicle, area, updates, journal) {
     if (current === JSON.stringify(before)) return;
     assert(current === JSON.stringify(expected), "Recovery");
     await vehicle.update({...before,
-      [metadataKey]: new foundry.data.operators.ForcedReplacement(before[metadataKey])});
+      [metadataKey]: replacement(before[metadataKey])});
     assert(JSON.stringify(state()) === JSON.stringify(before), "Recovery");
   });
   await vehicle.update({...updates,
-    [metadataKey]: new foundry.data.operators.ForcedReplacement(expected[metadataKey])});
+    [metadataKey]: replacement(expected[metadataKey])});
   assert(JSON.stringify(state()) === JSON.stringify(expected), "Changed");
 }
 
@@ -242,15 +244,10 @@ async function destination(source, target, journal, offset) {
   const root = data[0];
   root.system.container = target.kind === "inventory" ? target.container?.id ?? null : null;
   for (const entry of data) {
-    if (target.actor?.type === "vehicle") {
-      entry.flags ??= {};
-      entry.flags[OBJECT_SCOPE] ??= {};
-      entry.flags[OBJECT_SCOPE].cargo = true;
-    } else if (entry.flags?.[OBJECT_SCOPE]) delete entry.flags[OBJECT_SCOPE].cargo;
+    setCargoState(entry, target.actor?.type === "vehicle");
     delete entry.system.attuned;
     delete entry.system.prepared;
     if (entry.system.crew) delete entry.system.crew.value;
-    if ("equipped" in entry.system) entry.system.equipped = false;
   }
   if (target.kind === "inventory") {
     await createItems(data, target.actor, journal);
@@ -338,7 +335,7 @@ export async function transfer(sources, target, {quantityPrompt = promptQuantity
     if (target.kind === "canvas") assert(target.scene === canvas.scene
       && canvas.dimensions.rect.contains(target.x, target.y), "Invalid");
     for (const [index, source] of prepared.entries()) {
-      await destination(source, target, journal, index * (canvas.grid?.size ?? 100));
+      await destination(source, target, journal, target.kind === "canvas" ? index * canvas.grid.size : 0);
     }
     for (const source of prepared) await removeSource(source, journal);
     return true;

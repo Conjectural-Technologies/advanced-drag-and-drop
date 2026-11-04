@@ -1,11 +1,17 @@
 import {
-  OBJECT_SCOPE, containedItemData, isObjectActor, isObjectItem, objectActorData, objectProperties, tokenDimension
+  OBJECT_SCOPE, containedItemData, isObjectActor, isObjectItem, objectActorData, objectProperties,
+  replacement, tokenDimension
 } from "./object-data.mjs";
 import {MODULE_ID} from "./controls.mjs";
 
 const queues = new Map();
 const syncOptions = () => ({ advancedItemsSync: true });
-const replacement = value => new foundry.data.operators.ForcedReplacement(value);
+
+function actorForDocument(document) {
+  if (document.documentName === "Actor") return document;
+  return document.actor
+    ?? (document.parent?.documentName === "Actor" ? document.parent : document.parent?.actor);
+}
 
 function enqueue(uuid, operation) {
   const previous = queues.get(uuid) ?? Promise.resolve();
@@ -125,10 +131,8 @@ export function registerItemLinking() {
   for (const type of ["Item", "ActiveEffect"]) {
     for (const operation of ["Create", "Update", "Delete"]) {
       Hooks.on(`pre${operation}${type}`, document => {
-        const actor = document.actor
-          ?? (document.parent?.documentName === "Actor" ? document.parent : document.parent?.actor);
         try {
-          linkedSource(actor);
+          linkedSource(actorForDocument(document));
         } catch (error) {
           ui.notifications.error(error.message);
           return false;
@@ -140,8 +144,7 @@ export function registerItemLinking() {
     if (options.advancedItemsSync || userId !== game.user.id) return;
     if (document.documentName === "Actor" && Object.keys(foundry.utils.flattenObject(changes))
       .every(key => ["_id", "flags.dnd5e.lastMovedToken"].includes(key))) return;
-    const actor = document.documentName === "Actor" ? document
-      : document.actor ?? (document.parent?.documentName === "Actor" ? document.parent : document.parent?.actor);
+    const actor = actorForDocument(document);
     if (isObjectActor(actor) && actor.token?.flags[OBJECT_SCOPE]?.linkItemData) {
       const uuid = actor.token.flags[OBJECT_SCOPE].itemUuid;
       enqueue(uuid, () => publishActor(actor));
