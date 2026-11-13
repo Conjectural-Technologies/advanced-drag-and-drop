@@ -1,5 +1,6 @@
 import {bindingMatches, isTransferHeld, onTransferChange, setTransferHeld, transferBindings} from "./controls.mjs";
 import {assert, isPhysicalItem, localize, report, sourceForToken, transfer} from "./transfers.mjs";
+import {installPlaceableTransferPreviews} from "./placeable-preview.mjs";
 
 let uninstall;
 
@@ -24,11 +25,24 @@ function getCanvasTokenPositions(session, point) {
   });
 }
 
-function createTokenPreview() {
+export function createTransferPreview() {
   const element = document.createElement("div");
   element.className = "advanced-drag-and-drop-preview advanced-drag-and-drop-token-preview";
   element.setAttribute("aria-hidden", "true");
+  document.body.append(element);
+  setPreviewOnTop(element, true);
   return element;
+}
+
+function setPreviewOnTop(element, on) {
+  if (typeof element.showPopover !== "function") return;
+  if (on && !element.matches(":popover-open")) {
+    element.setAttribute("popover", "manual");
+    element.showPopover();
+  } else if (!on && element.hasAttribute("popover")) {
+    if (element.matches(":popover-open")) element.hidePopover();
+    element.removeAttribute("popover");
+  }
 }
 
 function updateTransferClones(session) {
@@ -256,6 +270,7 @@ export function installDragBridge() {
   const prototype = CONFIG.Token.objectClass.prototype;
   const originals = new Map();
   const tokenCallbacks = new Map();
+  const stopPlaceablePreviews = installPlaceableTransferPreviews(createTransferPreview);
   const clearHighlight = () => {
     highlighted?.classList.remove("advanced-drag-and-drop-target");
     highlighted = null;
@@ -325,25 +340,19 @@ export function installDragBridge() {
       return;
     }
     if (!active.proxy) {
-      if (active.native) active.proxy = createTokenPreview();
+      if (active.native) active.proxy = createTransferPreview();
       else {
         active.proxy = document.createElement("img");
         active.proxy.className = "advanced-drag-and-drop-preview";
         active.proxy.alt = "";
         active.proxy.src = active.sources[0].item?.img ?? active.sources[0].actor?.img ?? "icons/svg/item-bag.svg";
+        document.body.append(active.proxy);
       }
-      document.body.append(active.proxy);
     }
+    if (!active.native) setPreviewOnTop(active.proxy, held);
     const element = document.elementFromPoint(active.point.clientX, active.point.clientY);
     if (active.native) {
-      const floating = Boolean(sheetAt(element));
-      if (!floating) {
-        for (const entry of active.previews.values()) {
-          entry.image?.remove();
-          delete entry.image;
-        }
-      }
-      positionTokenPreview(active, floating);
+      positionTokenPreview(active, true);
     }
     else {
       active.proxy.style.left = `${active.point.clientX + 12}px`;
@@ -512,6 +521,7 @@ export function installDragBridge() {
   const off = onTransferChange(refreshVisual);
   const hook = Hooks.on("canvasTearDown", cancel);
   uninstall = () => {
+    stopPlaceablePreviews();
     cancel();
     setTransferHeld(false);
     off();

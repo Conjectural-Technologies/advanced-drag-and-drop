@@ -23,6 +23,7 @@ Hold the **Transfer** key (default <kbd>V</kbd>, rebindable under **Configure Co
 
 - **Items** move between actor, container and vehicle sheets, and onto the canvas.
 - **Creatures** can be dragged from the canvas onto a vehicle's crew or passengers. Dragging them back out restores their saved token.
+- With **Advanced Interface** active, canvas cards can be transferred into card stacks on the canvas, stack sheets, or Cards-directory entries.
 - **Stacks** prompt for how many to move.
 - **Containers** move with their contents.
 - **Safe by design:** ownership and permissions are checked, transfers are rolled back on failure, and moving items into a vehicle marks them as cargo and unequips them.

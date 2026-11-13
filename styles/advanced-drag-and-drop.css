@@ -8,6 +8,20 @@
   opacity: 0.8;
 }
 
+.advanced-drag-and-drop-preview:popover-open {
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.advanced-drag-and-drop-preview::backdrop {
+  background: transparent;
+  pointer-events: none;
+}
+
 .advanced-drag-and-drop-token-preview {
   left: 0;
   top: 0;
